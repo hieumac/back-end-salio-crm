@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Salio.Domain</AssemblyName>
+    <RootNamespace>Salio.Domain</RootNamespace>
+  </PropertyGroup>
+</Project>

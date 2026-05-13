@@ -1,0 +1,19 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+## Logs
+logs/
+*.log
+
+## Local config
+appsettings.Local.json
+.env
+.env.local
+
+## OS
+.DS_Store
+Thumbs.db

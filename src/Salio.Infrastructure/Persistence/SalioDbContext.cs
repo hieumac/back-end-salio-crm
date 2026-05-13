@@ -1,0 +1,107 @@
+using Microsoft.EntityFrameworkCore;
+using Salio.Application.Common.Interfaces;
+using Salio.Domain.Common;
+using Salio.Domain.Entities.Ai;
+using Salio.Domain.Entities.Auth;
+using Salio.Domain.Entities.Chat;
+using Salio.Domain.Entities.Crm;
+using Salio.Domain.Entities.Cross;
+using Salio.Domain.Entities.Duplicate;
+using Salio.Domain.Entities.Identity;
+using Salio.Domain.Entities.Library;
+using Salio.Domain.Entities.Rbac;
+using TaskModel = Salio.Domain.Entities.Models.Task;
+
+namespace Salio.Infrastructure.Persistence;
+
+public class SalioDbContext(DbContextOptions<SalioDbContext> options) : DbContext(options), ISalioDbContext
+{
+    public DbSet<Organization> Organizations => Set<Organization>();
+    public DbSet<User> Users => Set<User>();
+    public DbSet<OrgMember> OrgMembers => Set<OrgMember>();
+
+    public DbSet<AuthIdentity> AuthIdentities => Set<AuthIdentity>();
+    public DbSet<UserSession> UserSessions => Set<UserSession>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<EmailVerificationToken> EmailVerificationTokens => Set<EmailVerificationToken>();
+    public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
+    public DbSet<MfaFactor> MfaFactors => Set<MfaFactor>();
+    public DbSet<MfaChallenge> MfaChallenges => Set<MfaChallenge>();
+    public DbSet<LoginAttempt> LoginAttempts => Set<LoginAttempt>();
+    public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
+    public DbSet<Invitation> Invitations => Set<Invitation>();
+
+    public DbSet<SystemFunction> SystemFunctions => Set<SystemFunction>();
+    public DbSet<SystemAction> SystemActions => Set<SystemAction>();
+    public DbSet<FunctionAction> FunctionActions => Set<FunctionAction>();
+    public DbSet<Permission> Permissions => Set<Permission>();
+    public DbSet<Role> Roles => Set<Role>();
+    public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
+    public DbSet<UserRole> UserRoles => Set<UserRole>();
+    public DbSet<PermissionGrant> PermissionGrants => Set<PermissionGrant>();
+    public DbSet<Team> Teams => Set<Team>();
+    public DbSet<TeamMember> TeamMembers => Set<TeamMember>();
+
+    public DbSet<Company> Companies => Set<Company>();
+    public DbSet<Contact> Contacts => Set<Contact>();
+    public DbSet<Pipeline> Pipelines => Set<Pipeline>();
+    public DbSet<PipelineStage> PipelineStages => Set<PipelineStage>();
+    public DbSet<Deal> Deals => Set<Deal>();
+    public DbSet<DealActivity> DealActivities => Set<DealActivity>();
+    public DbSet<DealStageHistory> DealStageHistories => Set<DealStageHistory>();
+    public DbSet<Product> Products => Set<Product>();
+    public DbSet<DealProduct> DealProducts => Set<DealProduct>();
+    public DbSet<TaskModel> Tasks => Set<TaskModel>();
+    public DbSet<DealFollower> DealFollowers => Set<DealFollower>();
+
+    public DbSet<DuplicateMatchGroup> DuplicateMatchGroups => Set<DuplicateMatchGroup>();
+    public DbSet<DuplicateMatchRecord> DuplicateMatchRecords => Set<DuplicateMatchRecord>();
+
+    public DbSet<AiInsight> AiInsights => Set<AiInsight>();
+    public DbSet<AiScoreHistory> AiScoreHistories => Set<AiScoreHistory>();
+
+    public DbSet<LibraryNode> LibraryNodes => Set<LibraryNode>();
+    public DbSet<LibraryPermission> LibraryPermissions => Set<LibraryPermission>();
+    public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
+
+    public DbSet<ChatConversation> ChatConversations => Set<ChatConversation>();
+    public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
+    public DbSet<ChatMessageSource> ChatMessageSources => Set<ChatMessageSource>();
+
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+
+    protected override void OnModelCreating(ModelBuilder builder)
+    {
+        builder.HasPostgresExtension("uuid-ossp");
+        builder.HasPostgresExtension("vector");
+        builder.HasPostgresExtension("pg_trgm");
+
+        // Apply all IEntityTypeConfiguration<T> in this assembly
+        builder.ApplyConfigurationsFromAssembly(typeof(SalioDbContext).Assembly);
+
+        base.OnModelCreating(builder);
+    }
+
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var entry in ChangeTracker.Entries<AuditableEntity>())
+        {
+            if (entry.State == EntityState.Added) entry.Entity.CreatedAt = now;
+            if (entry.State == EntityState.Added || entry.State == EntityState.Modified) entry.Entity.UpdatedAt = now;
+        }
+
+        // Soft delete: thay vì xóa, set DeletedAt
+        foreach (var entry in ChangeTracker.Entries<SoftDeletableEntity>())
+        {
+            if (entry.State == EntityState.Deleted)
+            {
+                entry.State = EntityState.Modified;
+                entry.Entity.DeletedAt = now;
+            }
+        }
+
+        return await base.SaveChangesAsync(cancellationToken);
+    }
+}

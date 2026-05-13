@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: salio-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: salio
+      POSTGRES_PASSWORD: salio123
+      POSTGRES_DB: salio_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - salio-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U salio -d salio_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  salio-pgdata:
