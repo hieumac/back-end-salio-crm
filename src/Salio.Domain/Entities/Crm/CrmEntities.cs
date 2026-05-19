@@ -150,7 +150,7 @@ public class Product : TenantEntity
     public decimal UnitPrice { get; set; }
     public string Unit { get; set; } = "unit";
     public string Currency { get; set; } = "VND";
-    public bool IsActive { get; set; } = true;
+    // IsActive đã inherit từ AuditableEntity (base field)
 
     public ICollection<DealProduct> DealProducts { get; set; } = [];
 }

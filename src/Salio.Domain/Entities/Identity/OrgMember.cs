@@ -14,6 +14,6 @@ public class OrgMember : AuditableEntity
     public User? User { get; set; }
 
     public string? Title { get; set; }
-    public bool IsActive { get; set; } = true;
+    // IsActive đã inherit từ AuditableEntity (base field)
     public DateTimeOffset? JoinedAt { get; set; }
 }

@@ -15,7 +15,7 @@ public class User : SoftDeletableEntity
     public string FullName { get; set; } = string.Empty;
     public string? AvatarUrl { get; set; }
     public DateTimeOffset? LastLoginAt { get; set; }
-    public bool IsActive { get; set; } = true;
+    // IsActive đã inherit từ AuditableEntity (base field)
     public bool EmailVerified { get; set; }
 
     public ICollection<OrgMember> Memberships { get; set; } = [];

@@ -5,6 +5,7 @@ using Salio.Application.Common.Interfaces;
 using Salio.Domain.Common;
 using Salio.Domain.Entities.Auth;
 using Salio.Domain.Entities.Identity;
+using Salio.Domain.Entities.Rbac;
 using Salio.Domain.Enums;
 
 namespace Salio.Application.Features.Auth.Commands;

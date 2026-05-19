@@ -1,19 +1,35 @@
 using System.Net;
 using System.Text.Json;
 using FluentValidation;
+using Salio.Api.Common;
 using Salio.Domain.Common;
 
 namespace Salio.Api.Middleware;
 
 /// <summary>
-/// Global exception → JSON ProblemDetails-like response chuẩn.
+/// Global exception → trả về JSON theo format <see cref="ApiResponse"/>:
+/// <code>
+/// {
+///   "status": "error",
+///   "code": 422,
+///   "message": "Validation failed",
+///   "errors": { "code": "VALIDATION", "details": [...] },
+///   "traceId": "00-abc..."
+/// }
+/// </code>
 /// </summary>
 public class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
 {
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
+
     public async Task InvokeAsync(HttpContext ctx)
     {
         try { await next(ctx); }
-        catch (ValidationException vex)
+        catch (FluentValidation.ValidationException vex)
         {
             await WriteAsync(ctx, HttpStatusCode.UnprocessableEntity, "VALIDATION", "Validation failed",
                 vex.Errors.Select(e => new { field = e.PropertyName, error = e.ErrorMessage }));
@@ -34,6 +50,10 @@ public class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Exception
         {
             await WriteAsync(ctx, HttpStatusCode.BadRequest, dex.Code ?? "DOMAIN_ERROR", dex.Message);
         }
+        catch (UnauthorizedAccessException uex)
+        {
+            await WriteAsync(ctx, HttpStatusCode.Unauthorized, "UNAUTHORIZED", uex.Message);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Unhandled exception");
@@ -41,15 +61,20 @@ public class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Exception
         }
     }
 
-    private static Task WriteAsync(HttpContext ctx, HttpStatusCode status, string code, string message, object? details = null)
+    private static Task WriteAsync(HttpContext ctx, HttpStatusCode status, string errorCode, string message, object? details = null)
     {
         ctx.Response.StatusCode = (int)status;
         ctx.Response.ContentType = "application/json";
-        return ctx.Response.WriteAsync(JsonSerializer.Serialize(new
+
+        var body = new ApiResponse
         {
-            success = false,
-            error = new { code, message, details },
-            traceId = ctx.TraceIdentifier,
-        }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+            Status = ApiStatus.Error,
+            Code = (int)status,
+            Message = message,
+            Errors = new { code = errorCode, details },
+            TraceId = ctx.TraceIdentifier,
+        };
+
+        return ctx.Response.WriteAsync(JsonSerializer.Serialize(body, JsonOpts));
     }
 }

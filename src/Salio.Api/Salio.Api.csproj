@@ -3,6 +3,8 @@
     <AssemblyName>Salio.Api</AssemblyName>
     <RootNamespace>Salio.Api</RootNamespace>
     <UserSecretsId>salio-sales-ai-dev</UserSecretsId>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

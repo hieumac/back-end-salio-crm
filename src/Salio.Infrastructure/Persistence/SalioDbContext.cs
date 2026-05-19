@@ -14,8 +14,19 @@ using TaskModel = Salio.Domain.Entities.Models.Task;
 
 namespace Salio.Infrastructure.Persistence;
 
-public class SalioDbContext(DbContextOptions<SalioDbContext> options) : DbContext(options), ISalioDbContext
+public class SalioDbContext : DbContext, ISalioDbContext
 {
+    private readonly ICurrentUserService? _currentUser;
+
+    public SalioDbContext(DbContextOptions<SalioDbContext> options) : base(options) { }
+
+    public SalioDbContext(DbContextOptions<SalioDbContext> options, ICurrentUserService currentUser)
+        : base(options)
+    {
+        _currentUser = currentUser;
+    }
+
+
     public DbSet<Organization> Organizations => Set<Organization>();
     public DbSet<User> Users => Set<User>();
     public DbSet<OrgMember> OrgMembers => Set<OrgMember>();
@@ -86,19 +97,32 @@ public class SalioDbContext(DbContextOptions<SalioDbContext> options) : DbContex
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
+        var userId = _currentUser?.UserId;
+
+        // ── Auditable: tự fill CreatedAt/CreatedBy/UpdatedAt/UpdatedBy ──
         foreach (var entry in ChangeTracker.Entries<AuditableEntity>())
         {
-            if (entry.State == EntityState.Added) entry.Entity.CreatedAt = now;
-            if (entry.State == EntityState.Added || entry.State == EntityState.Modified) entry.Entity.UpdatedAt = now;
+            if (entry.State == EntityState.Added)
+            {
+                entry.Entity.CreatedAt = now;
+                if (entry.Entity.CreatedBy is null) entry.Entity.CreatedBy = userId;
+            }
+            if (entry.State == EntityState.Added || entry.State == EntityState.Modified)
+            {
+                entry.Entity.UpdatedAt = now;
+                entry.Entity.UpdatedBy = userId;
+            }
         }
 
-        // Soft delete: thay vì xóa, set DeletedAt
+        // ── Soft delete: chuyển Delete → Modified + set DeletedAt/DeletedBy ──
         foreach (var entry in ChangeTracker.Entries<SoftDeletableEntity>())
         {
             if (entry.State == EntityState.Deleted)
             {
                 entry.State = EntityState.Modified;
                 entry.Entity.DeletedAt = now;
+                entry.Entity.DeletedBy = userId;
+                entry.Entity.IsActive = false; // tắt luôn cờ active
             }
         }
 

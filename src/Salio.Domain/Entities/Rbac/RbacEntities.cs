@@ -16,7 +16,7 @@ public class SystemFunction : AuditableEntity
     public string? Path { get; set; }
     public string? Icon { get; set; }
     public FunctionRiskLevel RiskLevel { get; set; } = FunctionRiskLevel.Low;
-    public bool IsActive { get; set; } = true;
+    // IsActive đã inherit từ AuditableEntity (base field)
     public int Order { get; set; }
 
     public ICollection<FunctionAction> FunctionActions { get; set; } = [];

@@ -1,4 +1,5 @@
 using Salio.Domain.Common;
+using Salio.Domain.Entities.Auth;
 using Salio.Domain.Entities.Crm;
 using Salio.Domain.Entities.Library;
 using Salio.Domain.Entities.Rbac;

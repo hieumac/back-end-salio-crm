@@ -1,11 +1,14 @@
-using System.Reflection;
 using System.Text;
 using Asp.Versioning;
+using Asp.Versioning.ApiExplorer;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Salio.Api.Common;
 using Salio.Api.Middleware;
 using Salio.Api.Services;
+using Salio.Api.Swagger;
 using Salio.Application;
 using Salio.Application.Common.Interfaces;
 using Salio.Infrastructure;
@@ -68,13 +71,41 @@ builder.Services
     });
 
 // ───────────── MVC ─────────────
-builder.Services.AddControllers()
+builder.Services.AddControllers(o =>
+    {
+        // Tự động bọc mọi response chưa-wrap vào template { status, code, message, data }
+        o.Filters.Add<ResponseWrapperFilter>();
+    })
     .AddJsonOptions(o =>
     {
         o.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
         o.JsonSerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
         o.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
     });
+
+// ModelState invalid (400) → trả về dưới dạng ApiResponse error (thay vì ProblemDetails mặc định)
+builder.Services.Configure<Microsoft.AspNetCore.Mvc.ApiBehaviorOptions>(o =>
+{
+    o.InvalidModelStateResponseFactory = ctx =>
+    {
+        var errors = ctx.ModelState
+            .Where(kv => kv.Value is { Errors.Count: > 0 })
+            .Select(kv => new
+            {
+                field = kv.Key,
+                errors = kv.Value!.Errors.Select(e => e.ErrorMessage).ToArray(),
+            });
+
+        return new Microsoft.AspNetCore.Mvc.BadRequestObjectResult(new ApiResponse
+        {
+            Status = ApiStatus.Error,
+            Code = StatusCodes.Status400BadRequest,
+            Message = "Validation failed",
+            Errors = new { code = "VALIDATION", details = errors },
+            TraceId = ctx.HttpContext.TraceIdentifier,
+        });
+    };
+});
 
 // ───────────── CORS ─────────────
 builder.Services.AddCors(opt =>
@@ -86,30 +117,54 @@ builder.Services.AddCors(opt =>
         .AllowCredentials());
 });
 
-// ───────────── Swagger ─────────────
+// ───────────── Swagger / OpenAPI ─────────────
 builder.Services.AddEndpointsApiExplorer();
+
+// Tự sinh SwaggerDoc cho từng API version (v1, v2, …) thông qua IApiVersionDescriptionProvider
+builder.Services.ConfigureOptions<ConfigureSwaggerOptions>();
+
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Salio Sales AI API", Version = "v1" });
+    // ── Bao gồm toàn bộ XML comment từ Api / Application / Domain ──
+    var baseDir = AppContext.BaseDirectory;
+    foreach (var xmlFile in new[]
+             {
+                 "Salio.Api.xml",
+                 "Salio.Application.xml",
+                 "Salio.Domain.xml",
+             })
+    {
+        var xmlPath = Path.Combine(baseDir, xmlFile);
+        if (File.Exists(xmlPath))
+        {
+            c.IncludeXmlComments(xmlPath, includeControllerXmlComments: true);
+        }
+    }
 
-    var xml = Path.Combine(AppContext.BaseDirectory, $"{Assembly.GetExecutingAssembly().GetName().Name}.xml");
-    if (File.Exists(xml)) c.IncludeXmlComments(xml);
-
+    // ── Bearer auth ──
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "JWT Bearer token. Format: `Bearer {token}`",
+        Description = "Nhập JWT access token theo định dạng: `Bearer {token}`",
         Name = "Authorization",
         In = ParameterLocation.Header,
-        Type = SecuritySchemeType.ApiKey,
-        Scheme = "Bearer",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
     });
-    c.AddSecurityRequirement(new OpenApiSecurityRequirement
-    {
-        [new OpenApiSecurityScheme
-        {
-            Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
-        }] = Array.Empty<string>()
-    });
+
+    // Chỉ gắn yêu cầu Bearer ở endpoint có [Authorize] (bỏ qua [AllowAnonymous])
+    c.OperationFilter<AuthorizeCheckOperationFilter>();
+
+    // ── Tổ chức tag theo controller ──
+    c.TagActionsBy(api => new[] { api.ActionDescriptor.RouteValues["controller"] ?? "Default" });
+    c.DocInclusionPredicate((_, _) => true);
+
+    // Tránh xung đột schema khi có DTO trùng tên ở các namespace khác nhau
+    c.CustomSchemaIds(t => t.FullName?.Replace("+", ".") ?? t.Name);
+
+    // Enum trả về dưới dạng string cho dễ đọc
+    c.UseAllOfToExtendReferenceSchemas();
+    c.SupportNonNullableReferenceTypes();
 });
 
 var app = builder.Build();
@@ -117,14 +172,22 @@ var app = builder.Build();
 // ───────────── Migrate & seed ─────────────
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<SalioDbContext>();
-    if (app.Configuration.GetValue<bool>("Database:AutoMigrate"))
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    try
     {
-        await db.Database.MigrateAsync();
+        var db = scope.ServiceProvider.GetRequiredService<SalioDbContext>();
+        if (app.Configuration.GetValue<bool>("Database:AutoMigrate"))
+        {
+            await db.Database.MigrateAsync();
+        }
+        if (app.Configuration.GetValue<bool>("Database:AutoSeed"))
+        {
+            await SalioDbSeeder.SeedAsync(db);
+        }
     }
-    if (app.Configuration.GetValue<bool>("Database:AutoSeed"))
+    catch (Exception ex)
     {
-        await SalioDbSeeder.SeedAsync(db);
+        logger.LogWarning(ex, "Database migration/seed skipped — could not connect to the database. The API will still start.");
     }
 }
 
@@ -132,13 +195,32 @@ using (var scope = app.Services.CreateScope())
 app.UseSerilogRequestLogging();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-if (app.Environment.IsDevelopment())
+// Bật Swagger ở cả Development và khi cấu hình Swagger:Enabled = true
+var swaggerEnabled = app.Environment.IsDevelopment()
+                     || app.Configuration.GetValue<bool>("Swagger:Enabled");
+
+if (swaggerEnabled)
 {
     app.UseSwagger();
     app.UseSwaggerUI(c =>
     {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Salio API v1");
+        var provider = app.Services.GetRequiredService<IApiVersionDescriptionProvider>();
+
+        // Tạo endpoint UI cho mỗi version API được khám phá
+        foreach (var description in provider.ApiVersionDescriptions
+                                            .OrderByDescending(d => d.ApiVersion))
+        {
+            c.SwaggerEndpoint(
+                $"/swagger/{description.GroupName}/swagger.json",
+                $"Salio API {description.GroupName.ToUpperInvariant()}");
+        }
+
         c.RoutePrefix = "swagger";
+        c.DocumentTitle = "Salio Sales AI API — Swagger UI";
+        c.DefaultModelsExpandDepth(-1);
+        c.DisplayRequestDuration();
+        c.EnableDeepLinking();
+        c.EnableFilter();
     });
 }
 
