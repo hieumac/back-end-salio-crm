@@ -1,399 +1,335 @@
 # 12 — Deployment
 
-> Checklist + hướng dẫn deploy production. Hai tùy chọn: VM Linux (Docker) hoặc managed services (Azure App Service / AWS ECS).
+> Hướng dẫn deploy production lên **Windows Server 2022 + IIS**. PostgreSQL cài trực tiếp trên VPS, không dùng Docker.
 
 ## Checklist trước khi go-live
 
 ### Code & config
 
-- [ ] **JWT Secret**: random ≥ 64 bytes, lưu env var / secret manager (KHÔNG commit).
-- [ ] **DB password**: random mạnh, lưu env var.
+- [ ] **JWT Secret**: random ≥ 64 bytes, lưu IIS Environment Variable (KHÔNG commit vào source).
+- [ ] **DB password**: random mạnh, lưu IIS Environment Variable.
 - [ ] **CORS origins**: chỉ allow domain frontend thật, không `localhost`.
-- [ ] **HTTPS**: bắt buộc — terminate ở reverse proxy hoặc app.
+- [ ] **HTTPS**: bắt buộc — cấu hình SSL Binding trong IIS.
 - [ ] **HSTS**: bật `app.UseHsts()` cho production.
-- [ ] **AutoMigrate**: tắt — chạy migration qua CI/CD.
-- [ ] **AutoSeed**: tắt sau lần seed đầu.
-- [ ] **Swagger**: tắt hoặc đưa sau gateway có auth.
-- [ ] **EnableSensitiveDataLogging**: tắt — không log password/token.
+- [ ] **AutoMigrate**: `false` — chạy migration thủ công trước khi deploy.
+- [ ] **AutoSeed**: `false` sau lần seed đầu.
+- [ ] **Swagger**: `false` trên production.
+- [ ] **Include Error Detail**: xóa khỏi connection string production.
 - [ ] **Logging level**: `Information` cho app, `Warning` cho Microsoft.*.
 
 ### Hạ tầng
 
-- [ ] Database backup tự động (daily), test restore.
-- [ ] Monitor / alerting (CPU, memory, disk, error rate).
-- [ ] Centralized log (ELK, Seq, Datadog, hoặc CloudWatch).
-- [ ] Health check endpoint cấu hình trong load balancer (`/api/v1/health`).
-- [ ] Rate limiting cho `/auth/*` và public endpoint.
-- [ ] WAF (CloudFlare, AWS WAF) cho IP throttle, SQL injection rules.
+- [ ] PostgreSQL 16 cài trên VPS, service tự khởi động cùng Windows.
+- [ ] Database backup tự động (Task Scheduler + pg_dump), giữ 30 ngày.
+- [ ] Windows Event Log hoặc file log `.\\logs\\salio-*.log` trong thư mục deploy.
+- [ ] Health check endpoint `/api/v1/health` hoạt động sau deploy.
+- [ ] Rate limiting cho `/auth/*` (hoặc cấu hình IIS IP/Domain Restriction).
+- [ ] Windows Firewall: chỉ mở port 80, 443 ra ngoài; port 5432 chỉ localhost.
 
 ### Security
 
-- [ ] Connection string không có `Include Error Detail=true` ở prod.
-- [ ] Cập nhật `.NET runtime` định kỳ (security patches).
-- [ ] `npm audit` / `dotnet list package --vulnerable` định kỳ.
-- [ ] Audit log enable (đã có sẵn `AuditLog` entity).
-- [ ] MFA cho admin accounts (chưa implement — TODO).
-- [ ] Secret rotation policy (DB password, JWT secret, OAuth client secret).
+- [ ] App Pool chạy với Identity riêng (không dùng `ApplicationPoolIdentity` mặc định cho prod).
+- [ ] Thư mục deploy: chỉ App Pool Identity có quyền Write vào `logs\`.
+- [ ] Connection string không có `Include Error Detail=true`.
+- [ ] Cập nhật .NET Hosting Bundle định kỳ (security patches).
+- [ ] `dotnet list package --vulnerable` định kỳ.
 
-## Cấu hình production
+---
 
-### `appsettings.Production.json`
+## Chuẩn bị Windows Server 2022
 
-```json
-{
-  "Logging": {
-    "LogLevel": { "Default": "Information", "Microsoft.AspNetCore": "Warning" }
-  },
-  "Database": {
-    "AutoMigrate": false,
-    "AutoSeed": false
-  },
-  "Cors": {
-    "Origins": [ "https://app.salio.com" ]
-  },
-  "Serilog": {
-    "MinimumLevel": {
-      "Default": "Information",
-      "Override": { "Microsoft": "Warning", "System": "Warning" }
-    },
-    "WriteTo": [
-      { "Name": "Console" },
-      { "Name": "File", "Args": { "path": "/var/log/salio/salio-.log", "rollingInterval": "Day", "retainedFileCountLimit": 30 } }
-    ]
-  }
+### 1. Cài IIS
+
+Mở PowerShell (Admin):
+
+```powershell
+# Bật IIS + các feature cần thiết
+Enable-WindowsOptionalFeature -Online -FeatureName `
+    IIS-WebServerRole, IIS-WebServer, IIS-CommonHttpFeatures, `
+    IIS-HttpErrors, IIS-HttpLogging, IIS-RequestFiltering, `
+    IIS-StaticContent, IIS-DefaultDocument, IIS-DirectoryBrowsing, `
+    IIS-ASPNET45, IIS-ISAPIExtensions, IIS-ISAPIFilter, `
+    IIS-HttpCompressionStatic, IIS-HttpCompressionDynamic, `
+    IIS-ManagementConsole -All
+```
+
+### 2. Cài .NET 10 Hosting Bundle
+
+Tải tại: https://dotnet.microsoft.com/download/dotnet/10.0
+→ Chọn: **ASP.NET Core Runtime 10.x — Windows Hosting Bundle**
+
+```powershell
+# Sau khi cài xong, reset IIS để load module mới
+iisreset
+```
+
+Kiểm tra:
+```powershell
+dotnet --list-runtimes
+# Phải thấy: Microsoft.AspNetCore.App 10.x.x
+```
+
+### 3. Cài PostgreSQL 16
+
+Tải tại: https://www.postgresql.org/download/windows/
+→ Installer (EDB): chọn PostgreSQL Server + Command Line Tools.
+
+Trong quá trình cài:
+- Port: `5432`
+- Superuser password: mật khẩu mạnh (lưu riêng)
+- Locale: `Vietnamese, Vietnam` hoặc `English, United States`
+
+Sau khi cài, tạo user + database cho Salio:
+
+```sql
+-- Chạy trong psql hoặc pgAdmin
+CREATE USER salio WITH PASSWORD 'STRONG_PASSWORD_HERE';
+CREATE DATABASE salio OWNER salio ENCODING 'UTF8';
+GRANT ALL PRIVILEGES ON DATABASE salio TO salio;
+
+-- Bật extension pgvector (bắt buộc cho AI features)
+\c salio
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+```
+
+Bật pgvector — tải pre-built binary tại https://github.com/pgvector/pgvector/releases
+hoặc dùng `pgvector` installer tương thích với phiên bản PostgreSQL 16 trên Windows.
+
+Cấu hình PostgreSQL chỉ lắng nghe localhost (mặc định đã là vậy):
+```ini
+# C:\Program Files\PostgreSQL\16\data\postgresql.conf
+listen_addresses = 'localhost'
+```
+
+---
+
+## Publish ứng dụng
+
+### Build & Publish từ máy dev
+
+```powershell
+# Publish framework-dependent (server phải có .NET 10 Hosting Bundle)
+dotnet publish src\Salio.Api\Salio.Api.csproj `
+    -c Release `
+    -r win-x64 `
+    --no-self-contained `
+    -o .\publish
+
+# Hoặc publish self-contained (không cần cài .NET trên server)
+dotnet publish src\Salio.Api\Salio.Api.csproj `
+    -c Release `
+    -r win-x64 `
+    --self-contained true `
+    -o .\publish
+```
+
+Copy thư mục `publish\` lên server (dùng SCP, SFTP, hoặc Robocopy):
+
+```powershell
+# Ví dụ copy qua network share
+robocopy .\publish \\VPS-SERVER\C$\inetpub\wwwroot\salio-api /MIR /XD logs
+```
+
+Thư mục deploy gợi ý: `C:\inetpub\wwwroot\salio-api\`
+
+---
+
+## Cấu hình IIS
+
+### 1. Tạo Application Pool
+
+Mở **IIS Manager** → Application Pools → Add Application Pool:
+
+| Thuộc tính | Giá trị |
+|---|---|
+| Name | `SalioApiPool` |
+| .NET CLR Version | **No Managed Code** (ASP.NET Core tự quản lý runtime) |
+| Managed Pipeline Mode | Integrated |
+| Start automatically | True |
+
+### 2. Tạo Website / Application
+
+- Sites → Add Website (hoặc thêm Application vào Default Web Site)
+- **Physical path**: `C:\inetpub\wwwroot\salio-api`
+- **Application Pool**: `SalioApiPool`
+- **Binding**: HTTPS, port 443, hostname `api.yourdomain.com`
+
+### 3. Cấu hình Environment Variables trong IIS
+
+**Cách A — qua IIS Manager (khuyến nghị):**
+
+IIS Manager → Sites → SalioApi → Configuration Editor
+→ `system.webServer/aspNetCore` → `environmentVariables` → thêm:
+
+| Name | Value |
+|---|---|
+| `ASPNETCORE_ENVIRONMENT` | `Production` |
+| `ConnectionStrings__Default` | `Host=localhost;Port=5432;Database=salio;Username=salio;Password=STRONG_PASSWORD` |
+| `Jwt__Secret` | `64-char-random-secret` |
+| `Cors__Origins__0` | `https://yourfrontend.com` |
+
+**Cách B — chỉnh trực tiếp `web.config`** (không commit secret vào git):
+
+```xml
+<environmentVariables>
+  <environmentVariable name="ASPNETCORE_ENVIRONMENT" value="Production" />
+  <environmentVariable name="ConnectionStrings__Default"
+    value="Host=localhost;Port=5432;Database=salio;Username=salio;Password=STRONG_PASSWORD" />
+  <environmentVariable name="Jwt__Secret"
+    value="YOUR_64_CHAR_SECRET_HERE" />
+</environmentVariables>
+```
+
+> ⚠️ **Không commit `web.config` có chứa secret lên git.** Dùng `.gitignore` hoặc quản lý file này ngoài source control trên server.
+
+### 4. Phân quyền thư mục
+
+```powershell
+# Cho phép App Pool Identity đọc file deploy
+icacls "C:\inetpub\wwwroot\salio-api" /grant "IIS AppPool\SalioApiPool:(OI)(CI)RX"
+
+# Cho phép ghi vào thư mục logs
+New-Item -ItemType Directory -Force "C:\inetpub\wwwroot\salio-api\logs"
+icacls "C:\inetpub\wwwroot\salio-api\logs" /grant "IIS AppPool\SalioApiPool:(OI)(CI)M"
+```
+
+### 5. SSL Certificate
+
+```powershell
+# Dùng Win-ACME (Let's Encrypt miễn phí cho IIS)
+# Tải: https://www.win-acme.com/
+
+wacs.exe --target iis --siteid <site-id> --installation iis
+```
+
+Hoặc import certificate mua sẵn qua IIS Manager → Server Certificates → Import.
+
+---
+
+## Chạy Database Migration
+
+> **KHÔNG bật `AutoMigrate: true` trên production.** Chạy migration thủ công trước khi deploy.
+
+```powershell
+# Từ máy dev — generate SQL script idempotent
+dotnet ef migrations script `
+    --project src\Salio.Infrastructure `
+    --startup-project src\Salio.Api `
+    --idempotent `
+    --output .\migrations\v1.0.0.sql
+
+# Apply lên server production
+psql -h localhost -U salio -d salio -f .\migrations\v1.0.0.sql
+```
+
+Hoặc dùng EF Bundle (chạy trực tiếp trên server):
+
+```powershell
+# Build bundle trên máy dev
+dotnet ef migrations bundle `
+    --project src\Salio.Infrastructure `
+    --startup-project src\Salio.Api `
+    --runtime win-x64 `
+    -o .\efbundle.exe
+
+# Copy efbundle.exe lên server và chạy
+.\efbundle.exe --connection "Host=localhost;Port=5432;Database=salio;Username=salio;Password=STRONG_PASSWORD"
+```
+
+---
+
+## Quy trình deploy cập nhật (Update)
+
+```powershell
+# 1. Publish bản mới ra thư mục tạm
+dotnet publish src\Salio.Api\Salio.Api.csproj -c Release -r win-x64 --no-self-contained -o .\publish-new
+
+# 2. Chạy migration nếu có thay đổi schema
+psql -h localhost -U salio -d salio -f .\migrations\vX.Y.Z.sql
+
+# 3. Dừng App Pool (tránh file lock)
+Invoke-Command -ComputerName VPS-SERVER -ScriptBlock {
+    Import-Module WebAdministration
+    Stop-WebAppPool -Name "SalioApiPool"
 }
-```
 
-### Env vars (override appsettings)
+# 4. Copy file mới lên (giữ nguyên thư mục logs)
+robocopy .\publish-new \\VPS-SERVER\C$\inetpub\wwwroot\salio-api /MIR /XD logs
 
-Nested key dùng `__` (double underscore) ở Linux, `:` ở Windows.
-
-```bash
-export ConnectionStrings__Default="Host=db.prod;Port=5432;Database=salio;Username=salio;Password=$(cat /run/secrets/db_pwd)"
-export Jwt__Secret="$(cat /run/secrets/jwt_secret)"
-export Jwt__Issuer="salio.api"
-export Jwt__Audience="salio.frontend"
-export ASPNETCORE_ENVIRONMENT="Production"
-export ASPNETCORE_URLS="http://0.0.0.0:8080"
-```
-
-## Option A: Deploy Docker (VM Linux)
-
-### Dockerfile
-
-`backend-dotnet/Dockerfile`:
-
-```dockerfile
-# Build stage
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
-WORKDIR /src
-
-COPY Directory.Build.props ./
-COPY src/Salio.Domain/*.csproj src/Salio.Domain/
-COPY src/Salio.Application/*.csproj src/Salio.Application/
-COPY src/Salio.Infrastructure/*.csproj src/Salio.Infrastructure/
-COPY src/Salio.Api/*.csproj src/Salio.Api/
-RUN dotnet restore src/Salio.Api/Salio.Api.csproj
-
-COPY . .
-RUN dotnet publish src/Salio.Api/Salio.Api.csproj -c Release -o /app /p:UseAppHost=false
-
-# Runtime stage
-FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
-WORKDIR /app
-COPY --from=build /app ./
-
-ENV ASPNETCORE_URLS=http://+:8080
-EXPOSE 8080
-
-ENTRYPOINT ["dotnet", "Salio.Api.dll"]
-```
-
-Build + push:
-
-```bash
-docker build -t salio-api:1.0.0 .
-docker tag salio-api:1.0.0 your-registry/salio-api:1.0.0
-docker push your-registry/salio-api:1.0.0
-```
-
-### `docker-compose.prod.yml`
-
-```yaml
-services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    restart: always
-    environment:
-      POSTGRES_DB: salio
-      POSTGRES_USER: salio
-      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    secrets:
-      - db_password
-    networks: [salio-net]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U salio"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  api:
-    image: your-registry/salio-api:1.0.0
-    restart: always
-    environment:
-      ASPNETCORE_ENVIRONMENT: Production
-      ConnectionStrings__Default: "Host=postgres;Port=5432;Database=salio;Username=salio;Password_FILE=/run/secrets/db_password"
-      Jwt__Secret_FILE: /run/secrets/jwt_secret
-    secrets:
-      - db_password
-      - jwt_secret
-    depends_on:
-      postgres: { condition: service_healthy }
-    networks: [salio-net]
-    ports:
-      - "8080:8080"
-
-  caddy:
-    image: caddy:2
-    restart: always
-    ports: ["80:80", "443:443"]
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy-data:/data
-    networks: [salio-net]
-
-secrets:
-  db_password: { file: ./secrets/db_password.txt }
-  jwt_secret: { file: ./secrets/jwt_secret.txt }
-
-volumes:
-  pgdata:
-  caddy-data:
-
-networks:
-  salio-net:
-```
-
-### Caddyfile (auto-HTTPS)
-
-```
-api.salio.com {
-    reverse_proxy api:8080
-    encode gzip
-    log {
-        output file /var/log/caddy/access.log
-    }
+# 5. Khởi động lại App Pool
+Invoke-Command -ComputerName VPS-SERVER -ScriptBlock {
+    Start-WebAppPool -Name "SalioApiPool"
 }
+
+# 6. Smoke test
+curl https://api.yourdomain.com/api/v1/health
 ```
 
-Caddy tự xin Let's Encrypt cert qua HTTP-01 challenge.
+---
 
-### Deploy
+## Backup PostgreSQL (Task Scheduler)
 
-```bash
-ssh prod-server
-cd /opt/salio
-git pull
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
-docker compose -f docker-compose.prod.yml logs -f api
+Tạo script `C:\Scripts\backup-salio.ps1`:
+
+```powershell
+$date = Get-Date -Format "yyyyMMdd"
+$backupDir = "C:\Backups\salio"
+$backupFile = "$backupDir\salio-$date.backup"
+
+New-Item -ItemType Directory -Force $backupDir | Out-Null
+
+& "C:\Program Files\PostgreSQL\16\bin\pg_dump.exe" `
+    -h localhost -U salio -d salio `
+    -F c -f $backupFile
+
+# Xóa backup cũ hơn 30 ngày
+Get-ChildItem $backupDir -Filter "*.backup" |
+    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } |
+    Remove-Item -Force
+
+Write-Host "Backup completed: $backupFile"
 ```
 
-### Migration on deploy
+Đăng ký Task Scheduler chạy 2:00 AM hàng ngày:
 
-Không bật AutoMigrate ở prod. Chạy migration thủ công:
-
-```bash
-# Sinh script (lúc dev)
-dotnet ef migrations script <FromMigration> <ToMigration> \
-  --project src/Salio.Infrastructure --startup-project src/Salio.Api \
-  --output ./migrations/v1.0.1.sql --idempotent
-
-# Apply trên prod
-docker exec -i salio-postgres psql -U salio -d salio < migrations/v1.0.1.sql
+```powershell
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-File C:\Scripts\backup-salio.ps1"
+$trigger = New-ScheduledTaskTrigger -Daily -At "02:00"
+$settings = New-ScheduledTaskSettingsSet -RunOnlyIfNetworkAvailable
+Register-ScheduledTask -TaskName "SalioDbBackup" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest
 ```
 
-Hoặc EF bundle:
+---
 
-```bash
-dotnet ef migrations bundle --project src/Salio.Infrastructure --startup-project src/Salio.Api -o ./efbundle
-./efbundle --connection "Host=db.prod;..."
+## Kiểm tra sau deploy
+
+```powershell
+# Health check
+curl https://api.yourdomain.com/api/v1/health
+
+# Kiểm tra log gần nhất
+Get-Content "C:\inetpub\wwwroot\salio-api\logs\salio-$(Get-Date -Format 'yyyyMMdd').log" -Tail 50
+
+# Kiểm tra App Pool đang chạy
+Get-WebAppPoolState -Name "SalioApiPool"
+
+# Kiểm tra PostgreSQL service
+Get-Service -Name "postgresql-x64-16"
 ```
 
-## Option B: Azure App Service
+---
 
-```bash
-# Tạo resource group, plan, app
-az group create -n salio-rg -l southeastasia
-az appservice plan create -n salio-plan -g salio-rg --is-linux --sku B2
-az webapp create -n salio-api -g salio-rg -p salio-plan -r "DOTNETCORE:9.0"
+## Rollback
 
-# DB
-az postgres flexible-server create -n salio-db -g salio-rg --version 16 \
-  --admin-user salio --admin-password "<strong>" --sku-name Standard_B1ms
+```powershell
+# Giữ 3 bản publish gần nhất ở C:\Deployments\salio\
+# Rollback = dừng pool → copy bản cũ → khởi động pool
 
-# Bật pgvector
-az postgres flexible-server parameter set --resource-group salio-rg --server-name salio-db \
-  --name azure.extensions --value vector,uuid-ossp,pg_trgm
-
-# App settings
-az webapp config appsettings set -n salio-api -g salio-rg --settings \
-  ConnectionStrings__Default="..." \
-  Jwt__Secret="..." \
-  ASPNETCORE_ENVIRONMENT="Production"
-
-# Deploy (zip)
-dotnet publish src/Salio.Api -c Release -o ./publish
-cd publish && zip -r ../publish.zip . && cd ..
-az webapp deploy -n salio-api -g salio-rg --src-path publish.zip --type zip
+Stop-WebAppPool -Name "SalioApiPool"
+robocopy "C:\Deployments\salio\v1.0.1" "C:\inetpub\wwwroot\salio-api" /MIR /XD logs
+Start-WebAppPool -Name "SalioApiPool"
 ```
 
-## Option C: AWS ECS Fargate
-
-Khung sơ bộ:
-- Push Docker image lên ECR.
-- Task definition với env vars từ Parameter Store / Secrets Manager.
-- ALB → ECS service.
-- RDS PostgreSQL với pgvector extension enable.
-- CloudWatch logs.
-
-(Chi tiết tùy infra team — viết Terraform/CDK module riêng.)
-
-## CI/CD ví dụ (GitHub Actions)
-
-`.github/workflows/deploy.yml`:
-
-```yaml
-name: Deploy
-on:
-  push: { branches: [main] }
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with: { dotnet-version: '9.0.x' }
-      - run: dotnet restore
-      - run: dotnet build --no-restore -c Release
-      - run: dotnet test --no-build -c Release
-
-      - name: Build & push image
-        run: |
-          docker build -t ghcr.io/${{ github.repository }}/salio-api:${{ github.sha }} .
-          echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          docker push ghcr.io/${{ github.repository }}/salio-api:${{ github.sha }}
-
-      - name: SSH deploy
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.PROD_HOST }}
-          username: ${{ secrets.PROD_USER }}
-          key: ${{ secrets.PROD_SSH_KEY }}
-          script: |
-            cd /opt/salio
-            export IMAGE_TAG=${{ github.sha }}
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d
-```
-
-## Monitoring
-
-### Health endpoint cho LB
-
-```http
-GET /api/v1/health
-→ 200 { "success": true, "data": { "status": "ok" } }
-```
-
-Mở rộng (gợi ý) — kiểm tra DB:
-
-```csharp
-[HttpGet]
-public async Task<IActionResult> Get([FromServices] SalioDbContext db, CancellationToken ct)
-{
-    var dbOk = await db.Database.CanConnectAsync(ct);
-    return Ok(ApiResponse<object>.Ok(new {
-        status = dbOk ? "ok" : "degraded",
-        db = dbOk,
-        timestamp = DateTimeOffset.UtcNow
-    }));
-}
-```
-
-### Metrics
-
-OpenTelemetry export Prometheus / Application Insights / Datadog:
-
-```csharp
-services.AddOpenTelemetry()
-    .WithMetrics(b => b.AddAspNetCoreInstrumentation().AddPrometheusExporter())
-    .WithTracing(b => b.AddAspNetCoreInstrumentation().AddNpgsql().AddOtlpExporter());
-```
-
-### Log aggregation
-
-Serilog Sink cho Seq:
-
-```csharp
-.WriteTo.Seq("http://seq.internal:5341", apiKey: cfg["Seq:ApiKey"])
-```
-
-Hoặc Elasticsearch:
-
-```csharp
-.WriteTo.Elasticsearch(new ElasticsearchSinkOptions(new Uri("http://es:9200")) { IndexFormat = "salio-{0:yyyy.MM.dd}" })
-```
-
-## Backup strategy
-
-### Daily logical backup
-
-`cron`:
-
-```bash
-0 2 * * * docker exec salio-postgres pg_dump -U salio -d salio -F c | gzip > /backups/salio-$(date +\%Y\%m\%d).sql.gz
-```
-
-Giữ 30 ngày, sync lên S3.
-
-### Point-in-time recovery (WAL)
-
-Cần setup `archive_mode=on`, `archive_command` → object storage. Hoặc dùng managed service (RDS/Azure DB) có PITR built-in.
-
-### Disaster recovery test
-
-Hàng quý: restore backup vào staging, smoke test → verify backup khả dụng.
-
-## Zero downtime deploy
-
-- Có 2+ replica API behind load balancer.
-- Rolling update: kéo new image, drain connection từ replica cũ.
-- DB migration backward compatible (thêm column nullable, không drop ngay).
-- Feature flag cho breaking change.
-
-## Rollback plan
-
-- Giữ 3 image tag gần nhất.
-- Rollback chỉ là pull image cũ + restart.
-- DB migration rollback: ưu tiên forward-only migration. Nếu phải rollback schema → manual SQL.
-
-## Post-deploy verify
-
-```bash
-# Health
-curl https://api.salio.com/api/v1/health
-
-# Login với account test
-curl -X POST https://api.salio.com/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test@salio.com","password":"..."}'
-
-# Check log
-docker compose -f docker-compose.prod.yml logs --tail 200 api | grep -i error
-```
-
-Nếu fail → rollback theo plan trên.
+> DB migration rollback: ưu tiên forward-only migration. Nếu phải rollback schema → chạy SQL thủ công đã chuẩn bị trước.
