@@ -1,0 +1,621 @@
+{
+  "info": {
+    "name": "Salio Sales AI API",
+    "_postman_id": "salio-crm-api-v1",
+    "description": "Toàn bộ endpoints của Salio CRM API v1.\n\n**Cách dùng:**\n1. Đặt biến `baseUrl` = `https://salio.codeonlabs.vn` (hoặc `http://localhost:5080` khi dev)\n2. Gọi **Auth / Login** — accessToken sẽ tự động được lưu vào biến `accessToken`\n3. Mọi request khác tự dùng token đó qua Authorization header",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl",      "value": "https://salio.codeonlabs.vn", "type": "string" },
+    { "key": "accessToken",  "value": "", "type": "string" },
+    { "key": "refreshToken", "value": "", "type": "string" },
+    { "key": "companyId",    "value": "00000000-0000-0000-0000-000000000000", "type": "string" },
+    { "key": "contactId",    "value": "00000000-0000-0000-0000-000000000000", "type": "string" },
+    { "key": "dealId",       "value": "00000000-0000-0000-0000-000000000000", "type": "string" },
+    { "key": "pipelineId",   "value": "00000000-0000-0000-0000-000000000000", "type": "string" },
+    { "key": "stageId",      "value": "00000000-0000-0000-0000-000000000000", "type": "string" },
+    { "key": "productId",    "value": "00000000-0000-0000-0000-000000000000", "type": "string" },
+    { "key": "taskId",       "value": "00000000-0000-0000-0000-000000000000", "type": "string" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "🔐 Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('accessToken',  body.data.accessToken);",
+                  "    pm.collectionVariables.set('refreshToken', body.data.refreshToken);",
+                  "    console.log('✅ Token saved. Expires:', body.data.accessExpiresAt);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"password123\",\n  \"orgSlug\": null\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/login", "host": ["{{baseUrl}}"], "path": ["api","v1","auth","login"] },
+            "description": "Đăng nhập bằng email + password. accessToken & refreshToken tự động lưu vào biến collection."
+          }
+        },
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    console.log('✅ Registered userId:', pm.response.json().data);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"newuser@example.com\",\n  \"password\": \"password123\",\n  \"fullName\": \"Nguyễn Văn A\",\n  \"orgName\": \"Công ty TNHH ABC\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/register", "host": ["{{baseUrl}}"], "path": ["api","v1","auth","register"] },
+            "description": "Đăng ký user mới + tạo organization mới. Trả về userId."
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    pm.collectionVariables.set('accessToken',  body.data.accessToken);",
+                  "    pm.collectionVariables.set('refreshToken', body.data.refreshToken);",
+                  "    console.log('✅ Token refreshed.');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/refresh", "host": ["{{baseUrl}}"], "path": ["api","v1","auth","refresh"] },
+            "description": "Dùng refresh token để lấy access token mới (token rotation)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "❤️ Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/health", "host": ["{{baseUrl}}"], "path": ["api","v1","health"] },
+            "description": "Kiểm tra server đang chạy. Không cần auth."
+          }
+        }
+      ]
+    },
+    {
+      "name": "👤 Users",
+      "item": [
+        {
+          "name": "Get Me (thông tin bản thân)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/users/me", "host": ["{{baseUrl}}"], "path": ["api","v1","users","me"] },
+            "description": "Lấy thông tin user đang đăng nhập, org, và danh sách roles."
+          }
+        },
+        {
+          "name": "List Users",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","users"],
+              "query": [
+                { "key": "page",     "value": "1" },
+                { "key": "pageSize", "value": "20" },
+                { "key": "search",   "value": "", "disabled": true },
+                { "key": "isActive", "value": "true", "disabled": true }
+              ]
+            },
+            "description": "Liệt kê user thuộc org hiện tại. Yêu cầu permission: settings.users / view."
+          }
+        }
+      ]
+    },
+    {
+      "name": "🏢 Organizations",
+      "item": [
+        {
+          "name": "Get Current Org",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/organizations/current", "host": ["{{baseUrl}}"], "path": ["api","v1","organizations","current"] },
+            "description": "Lấy thông tin organization của user đang đăng nhập."
+          }
+        },
+        {
+          "name": "Update Current Org",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Tên công ty mới\",\n  \"locale\": \"vi-VN\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/organizations/current", "host": ["{{baseUrl}}"], "path": ["api","v1","organizations","current"] },
+            "description": "Cập nhật tên và locale của org. Yêu cầu permission: settings.organization / update."
+          }
+        }
+      ]
+    },
+    {
+      "name": "🏭 CRM / Companies",
+      "item": [
+        {
+          "name": "List Companies",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/crm/companies?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","crm","companies"],
+              "query": [
+                { "key": "page",      "value": "1" },
+                { "key": "pageSize",  "value": "20" },
+                { "key": "search",    "value": "", "disabled": true },
+                { "key": "industry",  "value": "", "disabled": true },
+                { "key": "ownerId",   "value": "", "disabled": true },
+                { "key": "sortBy",    "value": "updatedAt", "disabled": true },
+                { "key": "sortDir",   "value": "desc", "disabled": true }
+              ]
+            },
+            "description": "Tìm kiếm / lọc / phân trang danh sách công ty.\nsortBy: name | createdAt | updatedAt\nsortDir: asc | desc"
+          }
+        },
+        {
+          "name": "Get Company by ID",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/companies/{{companyId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","companies","{{companyId}}"] },
+            "description": "Lấy chi tiết một công ty theo ID."
+          }
+        },
+        {
+          "name": "Create Company",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('companyId', pm.response.json().data);",
+                  "    console.log('✅ companyId saved:', pm.response.json().data);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Công ty TNHH Mẫu\",\n  \"taxCode\": \"0123456789\",\n  \"industry\": \"Technology\",\n  \"size\": \"11-50\",\n  \"website\": \"https://example.com\",\n  \"phone\": \"0901234567\",\n  \"email\": \"contact@example.com\",\n  \"address\": \"123 Nguyễn Huệ, Q1, TP.HCM\",\n  \"ownerId\": null\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/companies", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","companies"] },
+            "description": "Tạo công ty mới. companyId tự động lưu vào biến collection."
+          }
+        },
+        {
+          "name": "Update Company",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{companyId}}\",\n  \"name\": \"Tên công ty cập nhật\",\n  \"taxCode\": \"0123456789\",\n  \"industry\": \"Technology\",\n  \"size\": \"51-200\",\n  \"website\": \"https://example.com\",\n  \"phone\": \"0901234567\",\n  \"email\": \"new@example.com\",\n  \"address\": \"456 Lê Lợi, Q1, TP.HCM\",\n  \"ownerId\": null\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/companies/{{companyId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","companies","{{companyId}}"] },
+            "description": "Cập nhật thông tin công ty. ID trong body phải khớp với ID trên URL."
+          }
+        },
+        {
+          "name": "Delete Company",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/companies/{{companyId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","companies","{{companyId}}"] },
+            "description": "Xoá mềm (soft delete) một công ty."
+          }
+        }
+      ]
+    },
+    {
+      "name": "👥 CRM / Contacts",
+      "item": [
+        {
+          "name": "List Contacts",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/crm/contacts?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","crm","contacts"],
+              "query": [
+                { "key": "page",      "value": "1" },
+                { "key": "pageSize",  "value": "20" },
+                { "key": "search",    "value": "", "disabled": true },
+                { "key": "companyId", "value": "", "disabled": true },
+                { "key": "sortBy",    "value": "updatedAt", "disabled": true },
+                { "key": "sortDir",   "value": "desc", "disabled": true }
+              ]
+            },
+            "description": "Danh sách liên hệ. Có thể lọc theo companyId."
+          }
+        },
+        {
+          "name": "Get Contact by ID",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/contacts/{{contactId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","contacts","{{contactId}}"] }
+          }
+        },
+        {
+          "name": "Create Contact",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('contactId', pm.response.json().data);",
+                  "    console.log('✅ contactId saved:', pm.response.json().data);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Nguyễn Thị B\",\n  \"companyId\": \"{{companyId}}\",\n  \"email\": \"nguyenthib@example.com\",\n  \"phone\": \"0912345678\",\n  \"title\": \"Giám đốc mua hàng\",\n  \"isPrimary\": true\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/contacts", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","contacts"] }
+          }
+        },
+        {
+          "name": "Update Contact",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{contactId}}\",\n  \"fullName\": \"Nguyễn Thị B (updated)\",\n  \"companyId\": \"{{companyId}}\",\n  \"email\": \"nguyenthib@example.com\",\n  \"phone\": \"0912345678\",\n  \"title\": \"CEO\",\n  \"isPrimary\": true\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/contacts/{{contactId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","contacts","{{contactId}}"] }
+          }
+        },
+        {
+          "name": "Delete Contact",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/contacts/{{contactId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","contacts","{{contactId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "💰 CRM / Deals",
+      "item": [
+        {
+          "name": "List Deals",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/crm/deals?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","crm","deals"],
+              "query": [
+                { "key": "page",       "value": "1" },
+                { "key": "pageSize",   "value": "20" },
+                { "key": "search",     "value": "", "disabled": true },
+                { "key": "pipelineId", "value": "", "disabled": true },
+                { "key": "stageId",    "value": "", "disabled": true },
+                { "key": "assigneeId", "value": "", "disabled": true },
+                { "key": "sortBy",     "value": "createdAt", "disabled": true, "description": "createdAt | value | aiScore" },
+                { "key": "sortDir",    "value": "desc", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Deal by ID",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/deals/{{dealId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","deals","{{dealId}}"] }
+          }
+        },
+        {
+          "name": "Create Deal",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('dealId', pm.response.json().data);",
+                  "    console.log('✅ dealId saved:', pm.response.json().data);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Hợp đồng triển khai CRM Q3/2026\",\n  \"pipelineId\": \"{{pipelineId}}\",\n  \"stageId\": \"{{stageId}}\",\n  \"value\": 50000000,\n  \"currency\": \"VND\",\n  \"source\": \"Inbound\",\n  \"companyId\": \"{{companyId}}\",\n  \"contactId\": \"{{contactId}}\",\n  \"assigneeId\": null,\n  \"expectedCloseDate\": \"2026-09-30\",\n  \"notes\": \"Khách hàng đang đánh giá 3 nhà cung cấp\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/deals", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","deals"] },
+            "description": "source: Inbound | Outbound | Referral | Marketing | Event | Other"
+          }
+        },
+        {
+          "name": "Move Deal Stage",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"toStageId\": \"{{stageId}}\",\n  \"note\": \"Khách đã xác nhận ngân sách\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/deals/{{dealId}}/stage", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","deals","{{dealId}}","stage"] },
+            "description": "Di chuyển deal sang pipeline stage khác (Kanban drag-drop)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "🔀 CRM / Pipelines",
+      "item": [
+        {
+          "name": "List Pipelines",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/pipelines", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","pipelines"] },
+            "description": "Lấy danh sách tất cả pipelines kèm các stages."
+          }
+        },
+        {
+          "name": "Create Pipeline",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('pipelineId', pm.response.json().data);",
+                  "    console.log('✅ pipelineId saved:', pm.response.json().data);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Sales Pipeline\",\n  \"isDefault\": true,\n  \"stages\": [\n    { \"code\": \"new\",      \"name\": \"Mới\",            \"order\": 1, \"defaultProbability\": 10, \"isWon\": false, \"isLost\": false, \"color\": \"#3B82F6\" },\n    { \"code\": \"contact\",  \"name\": \"Đã liên hệ\",    \"order\": 2, \"defaultProbability\": 25, \"isWon\": false, \"isLost\": false, \"color\": \"#8B5CF6\" },\n    { \"code\": \"demo\",     \"name\": \"Demo\",           \"order\": 3, \"defaultProbability\": 50, \"isWon\": false, \"isLost\": false, \"color\": \"#F59E0B\" },\n    { \"code\": \"proposal\", \"name\": \"Báo giá\",        \"order\": 4, \"defaultProbability\": 70, \"isWon\": false, \"isLost\": false, \"color\": \"#EF4444\" },\n    { \"code\": \"won\",      \"name\": \"Thành công\",     \"order\": 5, \"defaultProbability\": 100, \"isWon\": true,  \"isLost\": false, \"color\": \"#10B981\" },\n    { \"code\": \"lost\",     \"name\": \"Thất bại\",       \"order\": 6, \"defaultProbability\": 0,   \"isWon\": false, \"isLost\": true,  \"color\": \"#6B7280\" }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/pipelines", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","pipelines"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📦 CRM / Products",
+      "item": [
+        {
+          "name": "List Products",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/crm/products?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","crm","products"],
+              "query": [
+                { "key": "page",     "value": "1" },
+                { "key": "pageSize", "value": "20" },
+                { "key": "search",   "value": "", "disabled": true },
+                { "key": "isActive", "value": "true", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('productId', pm.response.json().data);",
+                  "    console.log('✅ productId saved:', pm.response.json().data);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"CRM-PRO-001\",\n  \"name\": \"Salio CRM Pro License\",\n  \"description\": \"Gói CRM chuyên nghiệp cho doanh nghiệp vừa và lớn\",\n  \"unitPrice\": 1500000,\n  \"unit\": \"license/tháng\",\n  \"currency\": \"VND\",\n  \"isActive\": true\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/products", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","products"] }
+          }
+        },
+        {
+          "name": "Update Product",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{productId}}\",\n  \"name\": \"Salio CRM Pro License (updated)\",\n  \"description\": \"Mô tả mới\",\n  \"unitPrice\": 1800000,\n  \"unit\": \"license/tháng\",\n  \"currency\": \"VND\",\n  \"isActive\": true\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/crm/products/{{productId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","crm","products","{{productId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "✅ Tasks",
+      "item": [
+        {
+          "name": "List Tasks",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/tasks?page=1&pageSize=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api","v1","tasks"],
+              "query": [
+                { "key": "page",       "value": "1" },
+                { "key": "pageSize",   "value": "20" },
+                { "key": "search",     "value": "", "disabled": true },
+                { "key": "assigneeId", "value": "", "disabled": true },
+                { "key": "dealId",     "value": "", "disabled": true },
+                { "key": "status",     "value": "Pending", "disabled": true, "description": "Pending | InProgress | Done | Canceled" },
+                { "key": "mineOnly",   "value": "true", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Task",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    pm.collectionVariables.set('taskId', pm.response.json().data);",
+                  "    console.log('✅ taskId saved:', pm.response.json().data);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Gửi email báo giá cho khách hàng\",\n  \"description\": \"Chuẩn bị file PDF và gửi trước 17h\",\n  \"assigneeId\": null,\n  \"dealId\": \"{{dealId}}\",\n  \"dueAt\": \"2026-06-01T17:00:00+07:00\",\n  \"priority\": \"High\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/tasks", "host": ["{{baseUrl}}"], "path": ["api","v1","tasks"] },
+            "description": "priority: Low | Medium | High | Urgent"
+          }
+        },
+        {
+          "name": "Update Task",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"{{taskId}}\",\n  \"title\": \"Gửi email báo giá cho khách hàng (updated)\",\n  \"description\": \"Đã gửi, chờ phản hồi\",\n  \"assigneeId\": null,\n  \"dealId\": \"{{dealId}}\",\n  \"dueAt\": \"2026-06-02T17:00:00+07:00\",\n  \"priority\": \"High\",\n  \"status\": \"InProgress\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/tasks/{{taskId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","tasks","{{taskId}}"] },
+            "description": "status: Pending | InProgress | Done | Canceled\npriority: Low | Medium | High | Urgent"
+          }
+        },
+        {
+          "name": "Complete Task",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/api/v1/tasks/{{taskId}}/complete", "host": ["{{baseUrl}}"], "path": ["api","v1","tasks","{{taskId}}","complete"] },
+            "description": "Đánh dấu task là Done và ghi lại completedAt."
+          }
+        },
+        {
+          "name": "Delete Task",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/api/v1/tasks/{{taskId}}", "host": ["{{baseUrl}}"], "path": ["api","v1","tasks","{{taskId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "⚙️ System",
+      "item": [
+        {
+          "name": "List System Functions (RBAC Matrix)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/system/functions", "host": ["{{baseUrl}}"], "path": ["api","v1","system","functions"] },
+            "description": "Lấy danh sách tất cả system functions kèm actions — dùng cho UI RBAC permission matrix."
+          }
+        },
+        {
+          "name": "List System Actions",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/v1/system/actions", "host": ["{{baseUrl}}"], "path": ["api","v1","system","actions"] },
+            "description": "Lấy danh sách tất cả system actions chuẩn (view, create, update, delete, ...)."
+          }
+        }
+      ]
+    }
+  ]
+}

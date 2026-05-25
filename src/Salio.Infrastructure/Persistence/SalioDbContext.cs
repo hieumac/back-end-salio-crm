@@ -88,10 +88,41 @@ public class SalioDbContext : DbContext, ISalioDbContext
         builder.HasPostgresExtension("vector");
         builder.HasPostgresExtension("pg_trgm");
 
-        // Apply all IEntityTypeConfiguration<T> in this assembly
         builder.ApplyConfigurationsFromAssembly(typeof(SalioDbContext).Assembly);
 
+        // Chuyển toàn bộ column name chưa map sang snake_case cho khớp với SQL migrations
+        foreach (var entityType in builder.Model.GetEntityTypes())
+        {
+            foreach (var property in entityType.GetProperties())
+            {
+                var col = property.GetColumnName();
+                if (!string.IsNullOrEmpty(col))
+                    property.SetColumnName(ToSnakeCase(col));
+            }
+        }
+
         base.OnModelCreating(builder);
+    }
+
+    private static string ToSnakeCase(string input)
+    {
+        if (string.IsNullOrEmpty(input)) return input;
+        var sb = new System.Text.StringBuilder();
+        for (var i = 0; i < input.Length; i++)
+        {
+            var c = input[i];
+            if (char.IsUpper(c))
+            {
+                if (i > 0 && !char.IsUpper(input[i - 1]))
+                    sb.Append('_');
+                sb.Append(char.ToLowerInvariant(c));
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
     }
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

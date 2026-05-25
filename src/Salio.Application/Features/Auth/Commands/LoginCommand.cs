@@ -37,7 +37,7 @@ public class LoginCommandHandler(
 {
     public async Task<LoginResponse> Handle(LoginCommand request, CancellationToken ct)
     {
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Email == request.Email && !u.IsDeleted, ct)
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Email == request.Email && u.DeletedAt == null, ct)
             ?? throw new NotFoundException("User", request.Email);
 
         if (!user.IsActive) throw new ForbiddenException("Account disabled");
